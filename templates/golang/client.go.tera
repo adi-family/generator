@@ -1,0 +1,201 @@
+// Generated Go Client for {{ api_title }}
+// Version: {{ api_version }}
+
+package client
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+)
+
+// ============================================================================
+// Schema Definitions
+// ============================================================================
+
+{% for schema in schemas %}
+// {{ schema.name }}{% if schema.description %} - {{ schema.description }}{% endif %}
+type {{ schema.name }} struct {
+	{%- for prop in schema.properties %}
+	{{ prop.name | capitalize }} {{ prop.golang_type }} `json:"{{ prop.name }}{% if not prop.required %},omitempty{% endif %}"`
+	{%- endfor %}
+}
+
+{% endfor %}
+
+// ============================================================================
+// API Client
+// ============================================================================
+
+type ApiClientConfig struct {
+	BaseURL    string
+	HTTPClient *http.Client
+	Headers    map[string]string
+}
+
+type ApiClient struct {
+	baseURL    string
+	httpClient *http.Client
+	headers    map[string]string
+}
+
+func NewApiClient(config *ApiClientConfig) *ApiClient {
+	if config == nil {
+		config = &ApiClientConfig{}
+	}
+
+	if config.BaseURL == "" {
+		config.BaseURL = "{{ base_url }}"
+	}
+
+	if config.HTTPClient == nil {
+		config.HTTPClient = &http.Client{
+			Timeout: 30 * time.Second,
+		}
+	}
+
+	if config.Headers == nil {
+		config.Headers = make(map[string]string)
+	}
+
+	return &ApiClient{
+		baseURL:    config.BaseURL,
+		httpClient: config.HTTPClient,
+		headers:    config.Headers,
+	}
+}
+
+func (c *ApiClient) doRequest(method, path string, query url.Values, body interface{}) ([]byte, error) {
+	reqURL := c.baseURL + path
+
+	if len(query) > 0 {
+		reqURL += "?" + query.Encode()
+	}
+
+	var reqBody io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		reqBody = bytes.NewBuffer(jsonData)
+	}
+
+	req, err := http.NewRequest(method, reqURL, reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range c.headers {
+		req.Header.Set(key, value)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return respBody, nil
+}
+
+{% for operation in operations %}
+// {{ operation.id }} - {{ operation.summary | default(value=operation.id) }}
+{%- if operation.description %}
+// {{ operation.description }}
+{%- endif %}
+func (c *ApiClient) {{ operation.id | capitalize }}(
+	{%- for param in operation.parameters %}
+	{%- if param.location == "path" %}
+	{{ param.name }} {% if param.schema_type == "integer" %}int{% elif param.schema_type == "number" %}float64{% elif param.schema_type == "boolean" %}bool{% else %}string{% endif %},
+	{%- endif %}
+	{%- endfor %}
+	{%- for param in operation.parameters %}
+	{%- if param.location == "query" %}
+	{{ param.name }} {% if param.required %}{% if param.schema_type == "integer" %}int{% elif param.schema_type == "number" %}float64{% elif param.schema_type == "boolean" %}bool{% else %}string{% endif %}{% else %}*{% if param.schema_type == "integer" %}int{% elif param.schema_type == "number" %}float64{% elif param.schema_type == "boolean" %}bool{% else %}string{% endif %}{% endif %},
+	{%- endif %}
+	{%- endfor %}
+	{%- if operation.request_body %}
+	body {% if operation.request_body.required %}{% if operation.request_body.schema_ref %}*{{ operation.request_body.schema_ref }}{% else %}interface{}{% endif %}{% else %}*{% if operation.request_body.schema_ref %}{{ operation.request_body.schema_ref }}{% else %}interface{}{% endif %}{% endif %},
+	{%- endif %}
+) ({% for response in operation.responses %}{% if response.status_code == "200" or response.status_code == "201" %}{% if response.is_array and response.schema_ref %}[]{{ response.schema_ref }}{% elif response.schema_ref %}*{{ response.schema_ref }}{% else %}interface{}{% endif %}{% endif %}{% endfor %}, error) {
+	path := "{{ operation.path }}"
+	{%- for param in operation.parameters %}
+	{%- if param.location == "path" %}
+	path = fmt.Sprintf(path[:{% if loop.index == 1 %}0{% else %}{{ loop.index - 1 }}{% endif %}] + "%v" + path[{% if loop.index == 1 %}0{% else %}{{ loop.index }}{% endif %}:], {{ param.name }})
+	{%- endif %}
+	{%- endfor %}
+
+	{%- if operation.parameters | filter(attribute="location", value="query") | length > 0 %}
+	query := url.Values{}
+	{%- for param in operation.parameters %}
+	{%- if param.location == "query" %}
+	{%- if param.required %}
+	query.Set("{{ param.name }}", {% if param.schema_type == "integer" or param.schema_type == "number" %}strconv.FormatFloat(float64({{ param.name }}), 'f', -1, 64){% elif param.schema_type == "boolean" %}strconv.FormatBool({{ param.name }}){% else %}{{ param.name }}{% endif %})
+	{%- else %}
+	if {{ param.name }} != nil {
+		query.Set("{{ param.name }}", {% if param.schema_type == "integer" or param.schema_type == "number" %}strconv.FormatFloat(float64(*{{ param.name }}), 'f', -1, 64){% elif param.schema_type == "boolean" %}strconv.FormatBool(*{{ param.name }}){% else %}*{{ param.name }}{% endif %})
+	}
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+	{%- endif %}
+
+	respBody, err := c.doRequest(
+		"{{ operation.method | upper }}",
+		path,
+		{%- if operation.parameters | filter(attribute="location", value="query") | length > 0 %}
+		query,
+		{%- else %}
+		nil,
+		{%- endif %}
+		{%- if operation.request_body %}
+		body,
+		{%- else %}
+		nil,
+		{%- endif %}
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	{%- for response in operation.responses %}
+	{%- if response.status_code == "200" or response.status_code == "201" %}
+	{%- if response.is_array and response.schema_ref %}
+	var result []{{ response.schema_ref }}
+	{%- elif response.schema_ref %}
+	var result {{ response.schema_ref }}
+	{%- else %}
+	var result interface{}
+	{%- endif %}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	{%- if response.is_array and response.schema_ref %}
+	return result, nil
+	{%- elif response.schema_ref %}
+	return &result, nil
+	{%- else %}
+	return result, nil
+	{%- endif %}
+	{%- endif %}
+	{%- endfor %}
+}
+
+{% endfor %}

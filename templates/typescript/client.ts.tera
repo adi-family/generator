@@ -1,0 +1,196 @@
+// Generated TypeScript Client for {{ api_title }}
+// Version: {{ api_version }}
+
+import { z } from 'zod';
+
+// ============================================================================
+// Schema Definitions
+// ============================================================================
+
+{% for schema in schemas %}
+// {{ schema.name }}{% if schema.description %} - {{ schema.description }}{% endif %}
+export const {{ schema.name }}Schema = z.object({
+  {%- for prop in schema.properties %}
+  {{ prop.name }}: {{ prop.typescript_type }}{% if not prop.required %}.optional(){% endif %}{% if prop.nullable %}.nullable(){% endif %},
+  {%- endfor %}
+});
+
+export type {{ schema.name }} = z.infer<typeof {{ schema.name }}Schema>;
+
+{% endfor %}
+
+// ============================================================================
+// API Configuration Objects
+// ============================================================================
+
+{% for operation in operations %}
+export const {{ operation.id }}Config = {
+  method: '{{ operation.method | upper }}',
+  path: '{{ operation.path }}',
+  {%- if operation.parameters %}
+  parameters: {
+    {%- for param in operation.parameters %}
+    {%- if param.location == "query" %}
+    query: {
+      schema: z.object({
+        {%- for p in operation.parameters %}
+        {%- if p.location == "query" %}
+        {{ p.name }}: {% if p.schema_type == "integer" %}z.coerce.number(){% elif p.schema_type == "number" %}z.coerce.number(){% elif p.schema_type == "boolean" %}z.coerce.boolean(){% else %}z.string(){% endif %}{% if not p.required %}.optional(){% endif %},
+        {%- endif %}
+        {%- endfor %}
+      }){% if operation.parameters | filter(attribute="location", value="query") | first | get(key="required") == false %}.optional(){% endif %}
+    },
+    {%- break %}
+    {%- endif %}
+    {%- endfor %}
+    {%- for param in operation.parameters %}
+    {%- if param.location == "path" %}
+    path: {
+      schema: z.object({
+        {%- for p in operation.parameters %}
+        {%- if p.location == "path" %}
+        {{ p.name }}: {% if p.schema_type == "integer" %}z.coerce.number(){% elif p.schema_type == "number" %}z.coerce.number(){% else %}z.string(){% endif %},
+        {%- endif %}
+        {%- endfor %}
+      })
+    },
+    {%- break %}
+    {%- endif %}
+    {%- endfor %}
+  },
+  {%- endif %}
+  {%- if operation.request_body %}
+  requestBody: {
+    schema: {% if operation.request_body.schema_ref %}{{ operation.request_body.schema_ref }}Schema{% else %}z.any(){% endif %}
+  },
+  {%- endif %}
+  {%- if operation.responses %}
+  response: {
+    {%- for response in operation.responses %}
+    {%- if response.status_code == "200" or response.status_code == "201" %}
+    schema: {% if response.is_array and response.schema_ref %}z.array({{ response.schema_ref }}Schema){% elif response.schema_ref %}{{ response.schema_ref }}Schema{% else %}z.any(){% endif %}
+    {%- endif %}
+    {%- endfor %}
+  }
+  {%- endif %}
+} as const;
+
+{% endfor %}
+
+// ============================================================================
+// API Client
+// ============================================================================
+
+export interface ApiClientConfig {
+  baseUrl?: string;
+  headers?: Record<string, string>;
+}
+
+export class ApiClient {
+  private baseUrl: string;
+  private headers: Record<string, string>;
+
+  constructor(config: ApiClientConfig = {}) {
+    this.baseUrl = config.baseUrl || '{{ base_url }}';
+    this.headers = config.headers || {};
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    options: {
+      query?: Record<string, any>;
+      body?: any;
+      headers?: Record<string, string>;
+    } = {}
+  ): Promise<T> {
+    let url = `${this.baseUrl}${path}`;
+
+    // Add query parameters
+    if (options.query) {
+      const params = new URLSearchParams();
+      Object.entries(options.query).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          params.append(key, String(value));
+        }
+      });
+      const queryString = params.toString();
+      if (queryString) {
+        url += `?${queryString}`;
+      }
+    }
+
+    const response = await fetch(url, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...this.headers,
+        ...options.headers,
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.json();
+  }
+
+  {% for operation in operations %}
+  /**
+   * {{ operation.summary | default(value=operation.id) }}
+   {%- if operation.description %}
+   * {{ operation.description }}
+   {%- endif %}
+   */
+  async {{ operation.id }}(
+    {%- if operation.parameters or operation.request_body %}
+    params: {
+      {%- for param in operation.parameters %}
+      {%- if param.location == "path" %}
+      {{ param.name }}{% if not param.required %}?{% endif %}: {% if param.schema_type == "integer" or param.schema_type == "number" %}number{% elif param.schema_type == "boolean" %}boolean{% else %}string{% endif %};
+      {%- endif %}
+      {%- endfor %}
+      {%- for param in operation.parameters %}
+      {%- if param.location == "query" %}
+      {{ param.name }}{% if not param.required %}?{% endif %}: {% if param.schema_type == "integer" or param.schema_type == "number" %}number{% elif param.schema_type == "boolean" %}boolean{% else %}string{% endif %};
+      {%- endif %}
+      {%- endfor %}
+      {%- if operation.request_body %}
+      body{% if not operation.request_body.required %}?{% endif %}: {% if operation.request_body.schema_ref %}{{ operation.request_body.schema_ref }}{% else %}any{% endif %};
+      {%- endif %}
+    }
+    {%- endif %}
+  ): Promise<
+    {%- for response in operation.responses %}
+    {%- if response.status_code == "200" or response.status_code == "201" %}
+    {%- if response.is_array and response.schema_ref %}{{ response.schema_ref }}[]{% elif response.schema_ref %}{{ response.schema_ref }}{% else %}any{% endif %}
+    {%- endif %}
+    {%- endfor %}
+  > {
+    let path = '{{ operation.path }}';
+    {%- for param in operation.parameters %}
+    {%- if param.location == "path" %}
+    path = path.replace('{{ "{" }}{{ param.name }}{{ "}" }}', String(params.{{ param.name }}));
+    {%- endif %}
+    {%- endfor %}
+
+    return this.request('{{ operation.method | upper }}', path, {
+      {%- if operation.parameters | filter(attribute="location", value="query") | length > 0 %}
+      query: {
+        {%- for param in operation.parameters %}
+        {%- if param.location == "query" %}
+        {{ param.name }}: params.{{ param.name }},
+        {%- endif %}
+        {%- endfor %}
+      },
+      {%- endif %}
+      {%- if operation.request_body %}
+      body: params.body,
+      {%- endif %}
+    });
+  }
+
+  {% endfor %}
+}

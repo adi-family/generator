@@ -1,0 +1,20 @@
+# Rust
+/target
+Cargo.lock
+
+# Generated code
+/generated
+/ts-client
+/py-client
+/rust-client
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

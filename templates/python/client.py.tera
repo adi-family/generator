@@ -1,0 +1,145 @@
+# Generated Python Client for {{ api_title }}
+# Version: {{ api_version }}
+
+from typing import Any, Dict, List, Optional
+from datetime import datetime
+from pydantic import BaseModel, Field
+import requests
+
+# ============================================================================
+# Schema Definitions
+# ============================================================================
+
+{% for schema in schemas %}
+class {{ schema.name }}(BaseModel):
+    """{{ schema.description | default(value=schema.name) }}"""
+    {%- for prop in schema.properties %}
+    {{ prop.name }}: {% if not prop.required %}Optional[{% endif %}{{ prop.python_type }}{% if not prop.required %}]{% endif %}{% if prop.required %} = Field(...){% else %} = None{% endif %}
+    {%- endfor %}
+
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
+
+{% endfor %}
+
+# ============================================================================
+# API Client
+# ============================================================================
+
+class ApiClientConfig:
+    def __init__(self, base_url: str = '{{ base_url }}', headers: Optional[Dict[str, str]] = None):
+        self.base_url = base_url
+        self.headers = headers or {}
+
+
+class ApiClient:
+    def __init__(self, config: Optional[ApiClientConfig] = None):
+        config = config or ApiClientConfig()
+        self.base_url = config.base_url
+        self.headers = config.headers
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+
+    def _request(
+        self,
+        method: str,
+        path: str,
+        query: Optional[Dict[str, Any]] = None,
+        body: Optional[Any] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        url = f"{self.base_url}{path}"
+
+        req_headers = {'Content-Type': 'application/json'}
+        if headers:
+            req_headers.update(headers)
+
+        # Prepare body
+        json_body = None
+        if body:
+            if isinstance(body, BaseModel):
+                json_body = body.dict(exclude_none=True)
+            else:
+                json_body = body
+
+        response = self.session.request(
+            method=method,
+            url=url,
+            params=query,
+            json=json_body,
+            headers=req_headers,
+        )
+
+        response.raise_for_status()
+
+        if response.content:
+            return response.json()
+        return None
+
+    {% for operation in operations %}
+    def {{ operation.id }}(
+        self,
+        {%- for param in operation.parameters %}
+        {%- if param.location == "path" %}
+        {{ param.name }}: {% if param.schema_type == "integer" %}int{% elif param.schema_type == "number" %}float{% elif param.schema_type == "boolean" %}bool{% else %}str{% endif %},
+        {%- endif %}
+        {%- endfor %}
+        {%- for param in operation.parameters %}
+        {%- if param.location == "query" %}
+        {{ param.name }}: Optional[{% if param.schema_type == "integer" %}int{% elif param.schema_type == "number" %}float{% elif param.schema_type == "boolean" %}bool{% else %}str{% endif %}] = None,
+        {%- endif %}
+        {%- endfor %}
+        {%- if operation.request_body %}
+        body{% if not operation.request_body.required %}: Optional[{% if operation.request_body.schema_ref %}{{ operation.request_body.schema_ref }}{% else %}Any{% endif %}] = None{% else %}: {% if operation.request_body.schema_ref %}{{ operation.request_body.schema_ref }}{% else %}Any{% endif %}{% endif %},
+        {%- endif %}
+    ) -> {% for response in operation.responses %}{% if response.status_code == "200" or response.status_code == "201" %}{% if response.is_array and response.schema_ref %}List[{{ response.schema_ref }}]{% elif response.schema_ref %}{{ response.schema_ref }}{% else %}Any{% endif %}{% endif %}{% endfor %}:
+        """
+        {{ operation.summary | default(value=operation.id) }}
+        {%- if operation.description %}
+
+        {{ operation.description }}
+        {%- endif %}
+        """
+        path = '{{ operation.path }}'
+        {%- for param in operation.parameters %}
+        {%- if param.location == "path" %}
+        path = path.replace('{{ "{" }}{{ param.name }}{{ "}" }}', str({{ param.name }}))
+        {%- endif %}
+        {%- endfor %}
+
+        {%- if operation.parameters | filter(attribute="location", value="query") | length > 0 %}
+        query = {}
+        {%- for param in operation.parameters %}
+        {%- if param.location == "query" %}
+        if {{ param.name }} is not None:
+            query['{{ param.name }}'] = {{ param.name }}
+        {%- endif %}
+        {%- endfor %}
+        {%- endif %}
+
+        result = self._request(
+            '{{ operation.method | upper }}',
+            path,
+            {%- if operation.parameters | filter(attribute="location", value="query") | length > 0 %}
+            query=query,
+            {%- endif %}
+            {%- if operation.request_body %}
+            body=body,
+            {%- endif %}
+        )
+
+        {%- for response in operation.responses %}
+        {%- if response.status_code == "200" or response.status_code == "201" %}
+        {%- if response.is_array and response.schema_ref %}
+        return [{{ response.schema_ref }}(**item) for item in result]
+        {%- elif response.schema_ref %}
+        return {{ response.schema_ref }}(**result)
+        {%- else %}
+        return result
+        {%- endif %}
+        {%- endif %}
+        {%- endfor %}
+
+    {% endfor %}
