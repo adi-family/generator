@@ -1,160 +1,159 @@
 use anyhow::{Context, Result};
-use clap::{Parser, ValueEnum};
-use openapiv3::OpenAPI;
+use clap::Parser;
 use std::fs;
-use std::path::{Path, PathBuf};
-use tera::{Tera, Context as TeraContext};
+use std::path::PathBuf;
 
+mod config;
+mod parsers;
+mod generators;
 mod schema_processor;
 mod operation_processor;
 
-use schema_processor::extract_schemas;
-use operation_processor::extract_operations;
-
-#[derive(Debug, Clone, ValueEnum)]
-enum Language {
-    TypeScript,
-    Python,
-    Rust,
-    Golang,
-}
+use config::{load_config, merge_with_cli_args};
+use parsers::ParserRegistry;
+use generators::GeneratorRegistry;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Path to the OpenAPI specification file (YAML or JSON)
     #[arg(short, long)]
-    spec: PathBuf,
-
-    /// Target programming language
-    #[arg(short, long, value_enum)]
-    language: Language,
+    spec: Option<PathBuf>,
 
     /// Output directory for generated code
-    #[arg(short, long, default_value = "generated")]
-    output: PathBuf,
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Path to config file (overrides default location)
+    #[arg(short, long)]
+    config: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Read the OpenAPI specification
-    let spec_content = fs::read_to_string(&args.spec)
-        .context(format!("Failed to read spec file: {:?}", args.spec))?;
+    // Load configuration
+    let config = load_config(args.config.as_deref())?;
+    let merged_config = merge_with_cli_args(config, args.spec, args.output);
 
-    // Parse the OpenAPI specification
-    let openapi: OpenAPI = if args.spec.extension().and_then(|s| s.to_str()) == Some("json") {
-        serde_json::from_str(&spec_content)?
-    } else {
-        serde_yaml::from_str(&spec_content)?
-    };
+    // Validate we have input
+    let input_config = merged_config.input
+        .ok_or_else(|| anyhow::anyhow!("No input source specified. Use --spec or configure input in config file"))?;
 
-    // Create output directory
-    fs::create_dir_all(&args.output)?;
+    println!("📖 Reading input from: {:?}", input_config.source);
 
-    // Extract schemas and operations
-    let schemas = extract_schemas(&openapi);
-    let operations = extract_operations(&openapi);
+    // Create parser registry
+    let parser_registry = ParserRegistry::new();
 
-    // Generate code based on language
-    match args.language {
-        Language::TypeScript => generate_typescript(&openapi, &schemas, &operations, &args.output)?,
-        Language::Python => generate_python(&openapi, &schemas, &operations, &args.output)?,
-        Language::Golang => generate_golang(&openapi, &schemas, &operations, &args.output)?,
-        Language::Rust => generate_rust(&openapi, &args.output)?,
+    // Determine input format (explicit or auto-detect)
+    let format = input_config.format.clone().unwrap_or_else(|| {
+        parser_registry
+            .detect_format(&input_config.source)
+            .unwrap_or("openapi")
+            .to_string()
+    });
+
+    println!("🔍 Detected format: {}", format);
+
+    // Get parser
+    let parser = parser_registry.get(&format)
+        .ok_or_else(|| anyhow::anyhow!("Unknown input format: {}", format))?;
+
+    // Convert serde_yaml::Value to serde_json::Value for options
+    let options_json: std::collections::HashMap<String, serde_json::Value> = input_config.options.iter()
+        .filter_map(|(k, v)| {
+            serde_json::to_value(v).ok().map(|json_v| (k.clone(), json_v))
+        })
+        .collect();
+
+    // Parse input to intermediate representation
+    let schema_ir = parser.parse(&input_config.source, &options_json)
+        .with_context(|| format!("Failed to parse {} input", format))?;
+
+    println!("✅ Parsed {} schemas and {} operations",
+        schema_ir.schemas.len(),
+        schema_ir.operations.len()
+    );
+
+    // Create generator registry
+    let generator_registry = GeneratorRegistry::new();
+
+    // Determine output directory
+    let output_dir = merged_config.output.unwrap_or_else(|| PathBuf::from("generated"));
+    fs::create_dir_all(&output_dir)?;
+
+    // Execute before hooks
+    for hook in &merged_config.hooks.before_generate {
+        println!("🎣 Running before hook: {}", hook);
+        execute_hook(hook)?;
     }
 
-    println!("✅ Code generated successfully in {:?}", args.output);
+    // Process each generation configuration
+    let mut generated_count = 0;
+    for gen_config in &merged_config.generations {
+        if !gen_config.enabled {
+            println!("⏭️  Skipping disabled generator: {}", gen_config.generator);
+            continue;
+        }
+
+        println!("🔧 Generating with '{}'...", gen_config.generator);
+
+        // Get generator
+        let generator = generator_registry.get(&gen_config.generator)
+            .ok_or_else(|| anyhow::anyhow!("Unknown generator: {}", gen_config.generator))?;
+
+        // Validate config
+        generator.validate_config(gen_config)?;
+
+        // Generate code
+        let output = generator.generate_from_ir(&schema_ir, gen_config)
+            .with_context(|| format!("Failed to generate with '{}'", gen_config.generator))?;
+
+        // Write to file
+        let output_path = output_dir.join(&output.filename);
+
+        fs::write(&output_path, output.content)
+            .with_context(|| format!("Failed to write output file: {:?}", output_path))?;
+
+        println!("✅ Generated: {:?}", output_path);
+        generated_count += 1;
+    }
+
+    // Execute after hooks
+    for hook in &merged_config.hooks.after_generate {
+        println!("🎣 Running after hook: {}", hook);
+        execute_hook(hook)?;
+    }
+
+    if generated_count == 0 {
+        println!("⚠️  No generators were enabled. Check your configuration.");
+    } else {
+        println!("🎉 Successfully generated {} file(s)!", generated_count);
+    }
 
     Ok(())
 }
 
-fn generate_typescript(
-    openapi: &OpenAPI,
-    schemas: &[schema_processor::ProcessedSchema],
-    operations: &[operation_processor::ProcessedOperation],
-    output_dir: &Path,
-) -> Result<()> {
-    let tera = Tera::new("templates/typescript/**/*.tera")?;
-    let mut context = TeraContext::new();
+fn execute_hook(command: &str) -> Result<()> {
+    use std::process::Command;
 
-    context.insert("api_title", &openapi.info.title);
-    context.insert("api_version", &openapi.info.version);
-    context.insert("schemas", schemas);
-    context.insert("operations", operations);
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .args(["/C", command])
+            .output()
+    } else {
+        Command::new("sh")
+            .args(["-c", command])
+            .output()
+    }?;
 
-    // Get base URL from servers
-    let base_url = openapi
-        .servers
-        .first()
-        .map(|s| s.url.clone())
-        .unwrap_or_else(|| "http://localhost".to_string());
-    context.insert("base_url", &base_url);
+    if !output.status.success() {
+        anyhow::bail!(
+            "Hook failed: {}\nStderr: {}",
+            command,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
-    let output = tera.render("client.ts.tera", &context)?;
-    let output_file = output_dir.join("client.ts");
-    fs::write(output_file, output)?;
-
-    Ok(())
-}
-
-fn generate_python(
-    openapi: &OpenAPI,
-    schemas: &[schema_processor::ProcessedSchema],
-    operations: &[operation_processor::ProcessedOperation],
-    output_dir: &Path,
-) -> Result<()> {
-    let tera = Tera::new("templates/python/**/*.tera")?;
-    let mut context = TeraContext::new();
-
-    context.insert("api_title", &openapi.info.title);
-    context.insert("api_version", &openapi.info.version);
-    context.insert("schemas", schemas);
-    context.insert("operations", operations);
-
-    let base_url = openapi
-        .servers
-        .first()
-        .map(|s| s.url.clone())
-        .unwrap_or_else(|| "http://localhost".to_string());
-    context.insert("base_url", &base_url);
-
-    let output = tera.render("client.py.tera", &context)?;
-    let output_file = output_dir.join("client.py");
-    fs::write(output_file, output)?;
-
-    Ok(())
-}
-
-fn generate_golang(
-    openapi: &OpenAPI,
-    schemas: &[schema_processor::ProcessedSchema],
-    operations: &[operation_processor::ProcessedOperation],
-    output_dir: &Path,
-) -> Result<()> {
-    let tera = Tera::new("templates/golang/**/*.tera")?;
-    let mut context = TeraContext::new();
-
-    context.insert("api_title", &openapi.info.title);
-    context.insert("api_version", &openapi.info.version);
-    context.insert("schemas", schemas);
-    context.insert("operations", operations);
-
-    let base_url = openapi
-        .servers
-        .first()
-        .map(|s| s.url.clone())
-        .unwrap_or_else(|| "http://localhost".to_string());
-    context.insert("base_url", &base_url);
-
-    let output = tera.render("client.go.tera", &context)?;
-    let output_file = output_dir.join("client.go");
-    fs::write(output_file, output)?;
-
-    Ok(())
-}
-
-fn generate_rust(_openapi: &OpenAPI, _output_dir: &Path) -> Result<()> {
-    println!("Rust generation coming soon!");
     Ok(())
 }

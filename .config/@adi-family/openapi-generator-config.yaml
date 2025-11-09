@@ -1,0 +1,63 @@
+version: "1.0"
+
+# Input configuration
+input:
+  format: "openapi"  # Format will be auto-detected from file extension if omitted
+  source: "examples/petstore.yaml"
+  options: {}
+
+# Output directory for generated files
+output: "generated"
+
+# List of generation configurations - each one produces a file
+generations:
+  # TypeScript types only (Zod schemas + TypeScript types)
+  - generator: "typescript"
+    outputFile: "types.ts"
+    enabled: true
+    # template: "./custom-templates/typescript/types.tera"  # Optional: override default template
+    options:
+      zodValidation: true
+      includeComments: true
+
+  # TypeScript ADI HTTP compatible routes (server + client)
+  - generator: "typescript_adi_http"
+    outputFile: "routes.ts"
+    enabled: true
+    options:
+      includeServer: true
+      includeClient: true
+      baseUrlEnvVar: "API_BASE_URL"
+      routerName: "apiRouter"
+      clientName: "apiClient"
+
+  # Python client with Pydantic models
+  - generator: "python"
+    outputFile: "client.py"
+    enabled: true
+    options:
+      pydanticVersion: "2.0"
+      asyncClient: true
+      includeDocstrings: true
+
+  # Golang native client
+  - generator: "golang"
+    outputFile: "client.go"
+    enabled: true
+    options:
+      packageName: "apiclient"
+      includeValidation: true
+
+# Lifecycle hooks (optional)
+hooks:
+  beforeGenerate: []
+  afterGenerate: []
+
+# Custom type mapping overrides (optional)
+# typeMapping:
+#   integer:
+#     typescript: "number"
+#     python: "int"
+#   string:
+#     typescript: "string"
+#     python: "str"
