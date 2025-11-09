@@ -1,9 +1,9 @@
-use anyhow::{Context, Result};
-use std::path::{Path, PathBuf};
-use std::fs;
 use super::schema::{Config, InputConfig};
+use anyhow::{Context, Result};
+use std::fs;
+use std::path::{Path, PathBuf};
 
-pub const DEFAULT_CONFIG_PATH: &str = "./.config/@adi-family/openapi-generator-config.yaml";
+pub const DEFAULT_CONFIG_PATH: &str = "./.config/@adi-family/generator-config.yaml";
 
 /// Load configuration from file or return default
 pub fn load_config(custom_path: Option<&Path>) -> Result<Config> {

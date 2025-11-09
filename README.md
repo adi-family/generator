@@ -1,6 +1,6 @@
-# OpenAPI Code Generator
+# Code Generator
 
-A Rust-based OpenAPI 3.0 code generator that creates type-safe client libraries for TypeScript, Python, and Golang with native types.
+A Rust-based code generator that creates type-safe client libraries for TypeScript, Python, and Golang with native types from OpenAPI 3.0 specifications.
 
 ## Features
 
@@ -41,19 +41,19 @@ Generate client code from an OpenAPI specification:
 
 ```bash
 # TypeScript with Zod
-./target/release/openapi-generator \
+./target/release/generator \
   --spec examples/petstore.yaml \
   --language type-script \
   --output generated/typescript
 
 # Python with Pydantic
-./target/release/openapi-generator \
+./target/release/generator \
   --spec examples/petstore.yaml \
   --language python \
   --output generated/python
 
 # Golang
-./target/release/openapi-generator \
+./target/release/generator \
   --spec examples/petstore.yaml \
   --language golang \
   --output generated/golang
