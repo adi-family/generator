@@ -2,6 +2,14 @@
 name = "generator"
 version = "0.1.0"
 edition = "2021"
+description = "A Rust-based code generator that creates type-safe client libraries for TypeScript, Python, and Golang from OpenAPI 3.0 specifications"
+authors = ["ADI Family <team@adi-family.com>"]
+license = "MIT"
+repository = "https://github.com/adi-family/generator"
+homepage = "https://github.com/adi-family/generator"
+keywords = ["openapi", "code-generation", "api-client", "typescript", "python"]
+categories = ["development-tools", "api-bindings", "web-programming"]
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
