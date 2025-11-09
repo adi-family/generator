@@ -75,6 +75,139 @@ pub struct TypeInfo {
     pub enum_values: Option<Vec<String>>,
 }
 
+impl TypeInfo {
+    pub fn to_typescript(&self) -> String {
+        if self.is_array {
+            if let Some(item_type) = &self.array_item_type {
+                return format!("z.array({})", item_type.to_typescript_zod());
+            }
+            return "z.array(z.any())".to_string();
+        }
+
+        self.to_typescript_zod()
+    }
+
+    pub fn to_typescript_zod(&self) -> String {
+        if let Some(ref_name) = &self.reference {
+            return ref_name.clone();
+        }
+
+        if let Some(enum_vals) = &self.enum_values {
+            let values: Vec<String> = enum_vals.iter().map(|v| format!("\"{}\"", v)).collect();
+            return format!("z.enum([{}])", values.join(", "));
+        }
+
+        match self.openapi_type.as_str() {
+            "string" => {
+                if let Some(fmt) = &self.format {
+                    match fmt.as_str() {
+                        "date" | "date-time" => "z.date().or(z.string())".to_string(),
+                        "email" => "z.string().email()".to_string(),
+                        "uuid" => "z.string().uuid()".to_string(),
+                        "uri" => "z.string().url()".to_string(),
+                        _ => "z.string()".to_string(),
+                    }
+                } else {
+                    "z.string()".to_string()
+                }
+            }
+            "integer" | "number" => "z.number()".to_string(),
+            "boolean" => "z.boolean()".to_string(),
+            "object" => "z.any()".to_string(),
+            _ => "z.any()".to_string(),
+        }
+    }
+
+    pub fn to_python(&self) -> String {
+        if self.is_array {
+            if let Some(item_type) = &self.array_item_type {
+                return format!("List[{}]", item_type.to_python_type());
+            }
+            return "List[Any]".to_string();
+        }
+
+        self.to_python_type()
+    }
+
+    pub fn to_python_type(&self) -> String {
+        if let Some(ref_name) = &self.reference {
+            return ref_name.clone();
+        }
+
+        if self.enum_values.is_some() {
+            return "str".to_string(); // Enums handled separately
+        }
+
+        match self.openapi_type.as_str() {
+            "string" => {
+                if let Some(fmt) = &self.format {
+                    match fmt.as_str() {
+                        "date" | "date-time" => "datetime".to_string(),
+                        _ => "str".to_string(),
+                    }
+                } else {
+                    "str".to_string()
+                }
+            }
+            "integer" => "int".to_string(),
+            "number" => "float".to_string(),
+            "boolean" => "bool".to_string(),
+            "object" => "Dict[str, Any]".to_string(),
+            _ => "Any".to_string(),
+        }
+    }
+
+    pub fn to_golang(&self) -> String {
+        if self.is_array {
+            if let Some(item_type) = &self.array_item_type {
+                return format!("[]{}", item_type.to_golang_type());
+            }
+            return "[]interface{}".to_string();
+        }
+
+        self.to_golang_type()
+    }
+
+    pub fn to_golang_type(&self) -> String {
+        if let Some(ref_name) = &self.reference {
+            return ref_name.clone();
+        }
+
+        if self.enum_values.is_some() {
+            return "string".to_string();
+        }
+
+        match self.openapi_type.as_str() {
+            "string" => "string".to_string(),
+            "integer" => {
+                if let Some(fmt) = &self.format {
+                    match fmt.as_str() {
+                        "int32" => "int32".to_string(),
+                        "int64" => "int64".to_string(),
+                        _ => "int".to_string(),
+                    }
+                } else {
+                    "int".to_string()
+                }
+            }
+            "number" => {
+                if let Some(fmt) = &self.format {
+                    match fmt.as_str() {
+                        "float" => "float32".to_string(),
+                        "double" => "float64".to_string(),
+                        _ => "float64".to_string(),
+                    }
+                } else {
+                    "float64".to_string()
+                }
+            }
+            "boolean" => "bool".to_string(),
+            "object" => "map[string]interface{}".to_string(),
+            _ => "interface{}".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationDefinition {
     pub id: String,

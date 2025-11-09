@@ -1,9 +1,9 @@
-use super::{Generator, GeneratedOutput};
+use super::{GeneratedOutput, Generator};
 use crate::config::GenerationConfig;
-use crate::parsers::{SchemaIR, TypeInfo};
+use crate::parsers::SchemaIR;
 use anyhow::Result;
 use std::collections::HashMap;
-use tera::{Tera, Context};
+use tera::{Context, Tera};
 
 pub struct GolangGenerator;
 
@@ -34,7 +34,14 @@ impl Generator for GolangGenerator {
         // Add metadata
         context.insert("api_title", &schema_ir.metadata.title);
         context.insert("api_version", &schema_ir.metadata.version);
-        context.insert("base_url", &schema_ir.metadata.base_url.clone().unwrap_or_else(|| "http://localhost".to_string()));
+        context.insert(
+            "base_url",
+            &schema_ir
+                .metadata
+                .base_url
+                .clone()
+                .unwrap_or_else(|| "http://localhost".to_string()),
+        );
 
         // Convert schemas for template
         let schemas_for_template: Vec<_> = schema_ir
@@ -47,7 +54,7 @@ impl Generator for GolangGenerator {
                     .map(|field| {
                         serde_json::json!({
                             "name": field.name,
-                            "golang_type": type_info_to_golang(&field.type_info),
+                            "golang_type": field.type_info.to_golang(),
                             "required": field.required,
                             "json_tag": field.name,
                         })
@@ -97,51 +104,5 @@ impl Generator for GolangGenerator {
             content,
             metadata: HashMap::new(),
         })
-    }
-}
-
-fn type_info_to_golang(type_info: &TypeInfo) -> String {
-    if type_info.is_array {
-        if let Some(item_type) = &type_info.array_item_type {
-            return format!("[]{}", type_info_to_golang(item_type));
-        }
-        return "[]interface{}".to_string();
-    }
-
-    if let Some(ref_name) = &type_info.reference {
-        return ref_name.clone();
-    }
-
-    if type_info.enum_values.is_some() {
-        return "string".to_string();
-    }
-
-    match type_info.openapi_type.as_str() {
-        "string" => "string".to_string(),
-        "integer" => {
-            if let Some(fmt) = &type_info.format {
-                match fmt.as_str() {
-                    "int32" => "int32".to_string(),
-                    "int64" => "int64".to_string(),
-                    _ => "int".to_string(),
-                }
-            } else {
-                "int".to_string()
-            }
-        }
-        "number" => {
-            if let Some(fmt) = &type_info.format {
-                match fmt.as_str() {
-                    "float" => "float32".to_string(),
-                    "double" => "float64".to_string(),
-                    _ => "float64".to_string(),
-                }
-            } else {
-                "float64".to_string()
-            }
-        }
-        "boolean" => "bool".to_string(),
-        "object" => "map[string]interface{}".to_string(),
-        _ => "interface{}".to_string(),
     }
 }

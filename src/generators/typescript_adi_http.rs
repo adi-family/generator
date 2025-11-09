@@ -1,6 +1,6 @@
-use super::{Generator, GeneratedOutput};
+use super::{GeneratedOutput, Generator};
 use crate::config::GenerationConfig;
-use crate::parsers::{SchemaIR, TypeInfo, ParameterLocation};
+use crate::parsers::{ParameterLocation, SchemaIR, TypeInfo};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -30,19 +30,28 @@ impl Generator for TypeScriptAdiHttpGenerator {
         output.push_str(&format!("// Version: {}\n\n", schema_ir.metadata.version));
 
         output.push_str("import { z } from 'zod';\n");
-        output.push_str("import { createRoute, createRouter, createClient } from '@adi-family/http';\n\n");
+        output.push_str(
+            "import { createRoute, createRouter, createClient } from '@adi-family/http';\n\n",
+        );
 
         // Generate schemas
-        output.push_str("// ============================================================================\n");
+        output.push_str(
+            "// ============================================================================\n",
+        );
         output.push_str("// Schema Definitions\n");
-        output.push_str("// ============================================================================\n\n");
+        output.push_str(
+            "// ============================================================================\n\n",
+        );
 
         for schema in &schema_ir.schemas {
             if let Some(desc) = &schema.description {
                 output.push_str(&format!("// {}\n", desc));
             }
 
-            output.push_str(&format!("export const {}Schema = z.object({{\n", schema.name));
+            output.push_str(&format!(
+                "export const {}Schema = z.object({{\n",
+                schema.name
+            ));
 
             for field in &schema.fields {
                 let zod_type = type_info_to_zod(&field.type_info);
@@ -66,9 +75,13 @@ impl Generator for TypeScriptAdiHttpGenerator {
         }
 
         // Generate routes
-        output.push_str("// ============================================================================\n");
+        output.push_str(
+            "// ============================================================================\n",
+        );
         output.push_str("// Route Definitions\n");
-        output.push_str("// ============================================================================\n\n");
+        output.push_str(
+            "// ============================================================================\n\n",
+        );
 
         output.push_str("export const routes = {\n");
 
@@ -96,7 +109,10 @@ impl Generator for TypeScriptAdiHttpGenerator {
                 for param in query_params {
                     let param_type = param_type_to_zod(&param.schema_type);
                     let optional = if param.required { "" } else { ".optional()" };
-                    output.push_str(&format!("      {}: {}{},\n", param.name, param_type, optional));
+                    output.push_str(&format!(
+                        "      {}: {}{},\n",
+                        param.name, param_type, optional
+                    ));
                 }
                 output.push_str("    }).optional(),\n");
             }
@@ -148,11 +164,16 @@ impl Generator for TypeScriptAdiHttpGenerator {
                 .and_then(|v| v.as_str())
                 .unwrap_or("apiRouter");
 
-            output.push_str("// ============================================================================\n");
+            output.push_str(
+                "// ============================================================================\n",
+            );
             output.push_str("// Server-side Router\n");
             output.push_str("// ============================================================================\n\n");
 
-            output.push_str(&format!("export const {} = createRouter(routes, {{\n", router_name));
+            output.push_str(&format!(
+                "export const {} = createRouter(routes, {{\n",
+                router_name
+            ));
 
             for operation in &schema_ir.operations {
                 output.push_str(&format!("  {}: async (req) => {{\n", operation.id));
@@ -201,7 +222,9 @@ impl Generator for TypeScriptAdiHttpGenerator {
                 .and_then(|v| v.as_str())
                 .unwrap_or("API_BASE_URL");
 
-            output.push_str("// ============================================================================\n");
+            output.push_str(
+                "// ============================================================================\n",
+            );
             output.push_str("// Client-side API\n");
             output.push_str("// ============================================================================\n\n");
 
@@ -212,14 +235,21 @@ impl Generator for TypeScriptAdiHttpGenerator {
             output.push_str(&format!(
                 "  baseUrl: process.env.{} || '{}',\n",
                 base_url_env,
-                schema_ir.metadata.base_url.as_deref().unwrap_or("http://localhost:3000")
+                schema_ir
+                    .metadata
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("http://localhost:3000")
             ));
             output.push_str("});\n\n");
 
             // Add usage examples
             output.push_str("// Usage examples:\n");
             for operation in schema_ir.operations.iter().take(2) {
-                output.push_str(&format!("// const result = await {}.{}(", client_name, operation.id));
+                output.push_str(&format!(
+                    "// const result = await {}.{}(",
+                    client_name, operation.id
+                ));
 
                 let has_params = !operation.parameters.is_empty();
                 let has_body = operation.request_body.is_some();
@@ -248,6 +278,12 @@ impl Generator for TypeScriptAdiHttpGenerator {
     }
 }
 
+// Note: This function intentionally differs from TypeInfo::to_typescript_zod() for ADI HTTP-specific needs:
+// 1. Adds "Schema" suffix to reference names (e.g., "UserSchema" instead of "User")
+// 2. Uses z.string().datetime() for dates (not z.date().or(z.string()))
+// 3. Uses z.number().int() for integers (not just z.number())
+// 4. Uses z.record(z.any()) for objects (not z.any())
+// These differences are required for @adi-family/http compatibility.
 fn type_info_to_zod(type_info: &TypeInfo) -> String {
     if type_info.is_array {
         if let Some(item_type) = &type_info.array_item_type {
@@ -256,6 +292,7 @@ fn type_info_to_zod(type_info: &TypeInfo) -> String {
         return "z.array(z.any())".to_string();
     }
 
+    // ADI HTTP-specific: Add "Schema" suffix to references
     if let Some(ref_name) = &type_info.reference {
         return format!("{}Schema", ref_name);
     }

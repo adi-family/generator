@@ -1,9 +1,9 @@
-use super::{Generator, GeneratedOutput};
+use super::{GeneratedOutput, Generator};
 use crate::config::GenerationConfig;
-use crate::parsers::{SchemaIR, TypeInfo};
+use crate::parsers::SchemaIR;
 use anyhow::Result;
 use std::collections::HashMap;
-use tera::{Tera, Context};
+use tera::{Context, Tera};
 
 pub struct TypeScriptGenerator;
 
@@ -34,7 +34,14 @@ impl Generator for TypeScriptGenerator {
         // Add metadata
         context.insert("api_title", &schema_ir.metadata.title);
         context.insert("api_version", &schema_ir.metadata.version);
-        context.insert("base_url", &schema_ir.metadata.base_url.clone().unwrap_or_else(|| "http://localhost".to_string()));
+        context.insert(
+            "base_url",
+            &schema_ir
+                .metadata
+                .base_url
+                .clone()
+                .unwrap_or_else(|| "http://localhost".to_string()),
+        );
 
         // Convert schemas for template
         let schemas_for_template: Vec<_> = schema_ir
@@ -47,7 +54,7 @@ impl Generator for TypeScriptGenerator {
                     .map(|field| {
                         serde_json::json!({
                             "name": field.name,
-                            "typescript_type": type_info_to_typescript_zod(&field.type_info),
+                            "typescript_type": field.type_info.to_typescript_zod(),
                             "required": field.required,
                             "nullable": false,
                         })
@@ -99,43 +106,5 @@ impl Generator for TypeScriptGenerator {
             content,
             metadata: HashMap::new(),
         })
-    }
-}
-
-fn type_info_to_typescript_zod(type_info: &TypeInfo) -> String {
-    if type_info.is_array {
-        if let Some(item_type) = &type_info.array_item_type {
-            return format!("z.array({})", type_info_to_typescript_zod(item_type));
-        }
-        return "z.array(z.any())".to_string();
-    }
-
-    if let Some(ref_name) = &type_info.reference {
-        return ref_name.clone();
-    }
-
-    if let Some(enum_vals) = &type_info.enum_values {
-        let values: Vec<String> = enum_vals.iter().map(|v| format!("\"{}\"", v)).collect();
-        return format!("z.enum([{}])", values.join(", "));
-    }
-
-    match type_info.openapi_type.as_str() {
-        "string" => {
-            if let Some(fmt) = &type_info.format {
-                match fmt.as_str() {
-                    "date" | "date-time" => "z.date().or(z.string())".to_string(),
-                    "email" => "z.string().email()".to_string(),
-                    "uuid" => "z.string().uuid()".to_string(),
-                    "uri" => "z.string().url()".to_string(),
-                    _ => "z.string()".to_string(),
-                }
-            } else {
-                "z.string()".to_string()
-            }
-        }
-        "integer" | "number" => "z.number()".to_string(),
-        "boolean" => "z.boolean()".to_string(),
-        "object" => "z.any()".to_string(),
-        _ => "z.any()".to_string(),
     }
 }
